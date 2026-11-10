@@ -1,0 +1,216 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Experience {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+}
+
+enum Goal {
+  LOSE_WEIGHT
+  BUILD_MUSCLE
+  ENDURANCE
+  GENERAL_FITNESS
+}
+
+enum EquipmentAccess {
+  FULL_GYM
+  DUMBBELLS
+  BODYWEIGHT
+}
+
+enum Units {
+  IMPERIAL
+  METRIC
+}
+
+enum Sex {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum ExerciseType {
+  STRENGTH
+  CARDIO
+  MOBILITY
+}
+
+enum PlanSource {
+  MANUAL
+  TEMPLATE
+  GENERATED
+  AI
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Profile (filled in during onboarding)
+  name         String
+  birthYear    Int?
+  sex          Sex?
+  heightCm     Float?
+  weightKg     Float?
+  experience   Experience      @default(BEGINNER)
+  goal         Goal            @default(GENERAL_FITNESS)
+  equipment    EquipmentAccess @default(FULL_GYM)
+  daysPerWeek  Int             @default(3)
+  units        Units           @default(IMPERIAL)
+  onboarded    Boolean         @default(false)
+
+  plans       Plan[]
+  sessions    WorkoutSession[]
+  bodyMetrics BodyMetric[]
+  exercises   Exercise[]
+  scheduled   ScheduledWorkout[]
+}
+
+model Exercise {
+  // Library exercises use readable slugs ("barbell-bench-press"); custom ones use cuids.
+  id           String       @id @default(cuid())
+  name         String
+  type         ExerciseType @default(STRENGTH)
+  primaryMuscle String
+  secondaryMuscles String[]
+  equipment    String       // barbell | dumbbell | machine | cable | bodyweight | kettlebell | band | none
+  instructions String       @default("")
+  ownerId      String?      // null = built-in library exercise
+  owner        User?        @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  planExercises PlanExercise[]
+  setLogs       SetLog[]
+
+  @@index([primaryMuscle])
+  @@index([ownerId])
+}
+
+model Plan {
+  id          String     @id @default(cuid())
+  userId      String
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  description String     @default("")
+  goal        Goal?
+  source      PlanSource @default(MANUAL)
+  templateId  String?
+  isActive    Boolean    @default(false)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  days     PlanDay[]
+  sessions WorkoutSession[]
+
+  @@index([userId])
+}
+
+model PlanDay {
+  id        String  @id @default(cuid())
+  planId    String
+  plan      Plan    @relation(fields: [planId], references: [id], onDelete: Cascade)
+  order     Int
+  name      String
+  // 0 = Sunday ... 6 = Saturday. Null means "unscheduled / any day".
+  weekday   Int?
+  notes     String  @default("")
+
+  exercises PlanExercise[]
+  sessions  WorkoutSession[]
+  scheduled ScheduledWorkout[]
+
+  @@index([planId])
+}
+
+model PlanExercise {
+  id          String   @id @default(cuid())
+  planDayId   String
+  planDay     PlanDay  @relation(fields: [planDayId], references: [id], onDelete: Cascade)
+  exerciseId  String
+  exercise    Exercise @relation(fields: [exerciseId], references: [id])
+  order       Int
+  sets        Int      @default(3)
+  reps        String   @default("10")   // "8-12", "15", "AMRAP"
+  durationSec Int?                      // cardio / timed holds
+  distanceKm  Float?
+  restSec     Int      @default(90)
+  notes       String   @default("")
+}
+
+model WorkoutSession {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planId      String?
+  plan        Plan?     @relation(fields: [planId], references: [id], onDelete: SetNull)
+  planDayId   String?
+  planDay     PlanDay?  @relation(fields: [planDayId], references: [id], onDelete: SetNull)
+  name        String
+  startedAt   DateTime
+  completedAt DateTime
+  notes       String    @default("")
+  effort      Int?      // 1-10 perceived exertion
+  createdAt   DateTime  @default(now())
+
+  sets      SetLog[]
+  scheduled ScheduledWorkout?
+
+  @@index([userId, completedAt])
+}
+
+// A workout booked for a specific calendar day, on top of the plan's weekly pattern.
+model ScheduledWorkout {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Which plan day to do. Null = a named workout without a preset exercise list.
+  planDayId String?
+  planDay   PlanDay? @relation(fields: [planDayId], references: [id], onDelete: Cascade)
+  name      String
+  date      String   // the user's local calendar day, "YYYY-MM-DD"
+  time      String?  // optional local reminder time, "HH:MM"
+  notes     String   @default("")
+  // Set once the workout is logged; the entry then counts as done.
+  sessionId String?         @unique
+  session   WorkoutSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
+
+  @@index([userId, date])
+}
+
+model SetLog {
+  id          String         @id @default(cuid())
+  sessionId   String
+  session     WorkoutSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  exerciseId  String
+  exercise    Exercise       @relation(fields: [exerciseId], references: [id])
+  order       Int            // exercise order within the session
+  setNumber   Int
+  reps        Int?
+  weightKg    Float?
+  durationSec Int?
+  distanceKm  Float?
+
+  @@index([exerciseId])
+  @@index([sessionId])
+}
+
+model BodyMetric {
+  id       String   @id @default(cuid())
+  userId   String
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date     DateTime @default(now())
+  weightKg Float
+
+  @@index([userId, date])
+}
